@@ -1,0 +1,148 @@
+#!/usr/bin/env ruby
+
+require "rubygems"
+require "highline/import"
+require "octokit"
+
+
+def get_token
+  # get GitHub auth token, creating one if we don't find it.
+  token_file = File.expand_path("~/.migrate-issues-token")
+  if File.exist? token_file
+    open(token_file) do |f|
+      return f.read.chomp
+    end
+  else
+    puts "We need your password to generate an OAuth token. The password will not be stored."
+    username = ask "Username: "
+    password = ask("Password:  ") { |q| q.echo = '*' }
+    client = Octokit::Client.new(
+      :login => username,
+      :password => password,
+    )
+    reply = client.create_authorization(
+      :scopes => ["public_repo"],
+      :note => "Issue Migration",
+    )
+    token = reply.token
+    open(token_file, 'w') do |f|
+      f.write(token)
+    end
+    File.chmod(0o600, token_file)
+  end
+  return token
+end
+
+
+def migrate_comment_body(comment)
+  # create the migrated comment body with attribution
+  user = comment['user']['login']
+  date = comment['created_at']
+  return [
+    "@#{user} commented at #{date}",
+    comment['body']
+  ].join("\n\n")
+end
+
+def migrate_issue_body(repo, issue)
+  # create migrated issue body with link and attribution
+  user = issue['user']['login']
+  date = issue['created_at']
+  number = issue['number']
+  return [
+    "@#{user} opened #{repo}##{number} at #{date}",
+    issue['body']
+  ].join("\n\n")
+end
+
+
+def ensure_milestone(github, repo, title)
+  # get milestone number from title
+  # create the milestone if it doesn't exist
+  github.list_milestones(repo).each do |milestone|
+    if milestone.title == title
+      return milestone.number
+    end
+  end
+  puts "Creating milestone #{repo}:#{title}"
+  milestone = github.create_milestone(repo, title)
+  return milestone.number
+end
+
+
+def migrate_issue(github, from_number, from_repo, to_repo)
+  # migrate an issue from one repo to another.
+  puts "Migrating #{from_repo}##{from_number} to #{to_repo}"
+  
+  # get the original issue:
+  begin
+    issue = github.issue(from_repo, from_number)
+  rescue Octokit::NotFound
+    puts "#{from_repo}##{from_number} doesn't appear to exist"
+    return
+  end
+  if issue.closed_at?
+    puts "#{from_repo}##{from_number} is closed"
+    return
+  end
+  puts issue.title
+  
+  options = {
+    labels: issue.labels.map { |label| label.name },
+  }
+  if issue.assignee?
+    options['assignee'] = issue.assignee.login
+  end
+  if issue.milestone?
+    milestone = ensure_milestone(github, to_repo, issue.milestone.title)
+    options['milestone'] = milestone
+  end
+  body = migrate_issue_body(from_repo, issue)
+  
+  # create the new issue
+  new_issue = github.create_issue(to_repo, issue.title, body, options)
+  to_number = new_issue.number
+  puts "Created #{to_repo}##{to_number}: #{new_issue['title']}"
+  
+  # migrate comments
+  if issue.comments > 0
+    puts "Migrating #{issue['comments']} comments"
+    github.issue_comments(from_repo, from_number).each do |comment|
+      github.add_comment(to_repo, to_number, migrate_comment_body(comment))
+    end
+  end
+  github.add_comment(from_repo, from_number, "Migrated to #{to_repo}##{to_number}")
+  puts "Closing #{from_repo}##{from_number}"
+  github.close_issue(from_repo, from_number)
+end
+
+
+# get token
+token = get_token
+
+# create client
+github = Octokit::Client.new(:access_token => token)
+github.auto_paginate = true
+
+# parse args
+from_repo = ARGV[0]
+to_repo = ARGV[1]
+issues = ARGV.slice(2, ARGV.length).to_a.map { |a| a.to_i }
+
+if !from_repo
+  puts "Must specify source repo"
+  exit(1)
+end
+if !to_repo
+  puts "Must specify destination repo"
+  exit(1)
+end
+if issues.length == 0
+  puts "Must specify at least one issue to migrate"
+  exit(1)
+end
+
+# do the thing
+issues.map do |number|
+  migrate_issue(github, number, from_repo, to_repo)
+end
