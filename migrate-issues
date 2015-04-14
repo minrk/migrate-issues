@@ -29,24 +29,31 @@ def check_token
 end
 
 
-def migrate_comment_body(comment)
+def relink_issues(text, repo)
+  text = text.gsub(/(?<=^|[:,\s])(#\d+)\b/, "#{repo}\\1")
+  return text
+end
+
+
+def migrate_comment_body(comment, repo)
   # create the migrated comment body with attribution
   user = comment['user']['login']
   date = comment['created_at']
+  url = comment['html_url']
   return [
-    "@#{user} commented at #{date}",
-    comment['body']
+    "#{user} [commented](#{url}) at #{date}",
+    relink_issues(comment['body'], repo)
   ].join("\n\n")
 end
 
-def migrate_issue_body(repo, issue)
+def migrate_issue_body(issue, repo)
   # create migrated issue body with link and attribution
   user = issue['user']['login']
   date = issue['created_at']
   number = issue['number']
   return [
-    "@#{user} opened #{repo}##{number} at #{date}",
-    issue['body']
+    "#{user} opened #{repo}##{number} at #{date}",
+    relink_issues(issue['body'], repo)
   ].join("\n\n")
 end
 
@@ -82,6 +89,8 @@ def migrate_issue(github, from_number, from_repo, to_repo)
   end
   puts issue.title
   
+  body = migrate_issue_body(issue, from_repo)
+  
   options = {
     labels: issue.labels.map { |label| label.name },
   }
@@ -92,7 +101,6 @@ def migrate_issue(github, from_number, from_repo, to_repo)
     milestone = ensure_milestone(github, to_repo, issue.milestone.title)
     options['milestone'] = milestone
   end
-  body = migrate_issue_body(from_repo, issue)
   
   # create the new issue
   new_issue = github.create_issue(to_repo, issue.title, body, options)
@@ -103,7 +111,7 @@ def migrate_issue(github, from_number, from_repo, to_repo)
   if issue.comments > 0
     puts "Migrating #{issue['comments']} comments"
     github.issue_comments(from_repo, from_number).each do |comment|
-      github.add_comment(to_repo, to_number, migrate_comment_body(comment))
+      github.add_comment(to_repo, to_number, migrate_comment_body(comment, from_repo))
     end
   end
   github.add_comment(from_repo, from_number, "Migrated to #{to_repo}##{to_number}")
