@@ -1,36 +1,31 @@
 #!/usr/bin/env ruby
 
 require "rubygems"
+require "netrc"
 require "highline/import"
 require "octokit"
 
 
-def get_token
+def check_token
   # get GitHub auth token, creating one if we don't find it.
-  token_file = File.expand_path("~/.migrate-issues-token")
-  if File.exist? token_file
-    open(token_file) do |f|
-      return f.read.chomp
-    end
-  else
-    puts "We need your password to generate an OAuth token. The password will not be stored."
-    username = ask "Username: "
-    password = ask("Password:  ") { |q| q.echo = '*' }
-    client = Octokit::Client.new(
-      :login => username,
-      :password => password,
-    )
-    reply = client.create_authorization(
-      :scopes => ["public_repo"],
-      :note => "Issue Migration",
-    )
-    token = reply.token
-    open(token_file, 'w') do |f|
-      f.write(token)
-    end
-    File.chmod(0o600, token_file)
+  rc = Netrc.read Netrc.default_path
+  if not rc['api.github.com'].nil?
+    return
   end
-  return token
+  puts "We need your password to generate an OAuth token. The password will not be stored."
+  username = ask "Username: "
+  password = ask("Password:  ") { |q| q.echo = '*' }
+  client = Octokit::Client.new(
+    :login => username,
+    :password => password,
+  )
+  reply = client.create_authorization(
+    :scopes => ["public_repo"],
+    :note => "Issue Migration",
+  )
+  token = reply.token
+  rc['api.github.com'] = username, token
+  rc.save
 end
 
 
@@ -117,11 +112,11 @@ def migrate_issue(github, from_number, from_repo, to_repo)
 end
 
 
-# get token
-token = get_token
+# verify that there's a GitHub token in .netrc
+check_token
 
 # create client
-github = Octokit::Client.new(:access_token => token)
+github = Octokit::Client.new(:netrc => true)
 github.auto_paginate = true
 
 # parse args
