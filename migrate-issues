@@ -38,10 +38,9 @@ end
 def migrate_comment_body(comment, repo)
   # create the migrated comment body with attribution
   user = comment['user']['login']
-  date = comment['created_at']
   url = comment['html_url']
   return [
-    "@#{user} [commented](#{url}) at #{date}",
+    "@#{user} [commented](#{url})",
     relink_issues(comment['body'], repo)
   ].join("\n\n")
 end
@@ -49,10 +48,9 @@ end
 def migrate_issue_body(issue, repo)
   # create migrated issue body with link and attribution
   user = issue['user']['login']
-  date = issue['created_at']
   number = issue['number']
   return [
-    "@#{user} opened #{repo}##{number} at #{date}",
+    "@#{user} opened #{repo}##{number}",
     relink_issues(issue['body'], repo)
   ].join("\n\n")
 end
@@ -84,41 +82,67 @@ def migrate_issue(github, from_number, from_repo, to_repo)
     return
   end
   if issue.closed_at?
-    puts "#{from_repo}##{from_number} is closed"
+    puts "#{from_repo}##{from_number} is closed, not migrating"
     return
   end
   puts issue.title
   
-  body = migrate_issue_body(issue, from_repo)
-  
-  options = {
-    labels: issue.labels.map { |label| label.name },
+  data = {
+    issue: {
+      title: issue.title,
+      created_at: issue.created_at.iso8601,
+    },
+    comments: [],
   }
+  
+  data[:issue][:body] = migrate_issue_body(issue, from_repo)
+  
+  data[:issue][:labels] = issue.labels.map { |label| label.name }
   if issue.assignee?
-    options['assignee'] = issue.assignee.login
+    data[:issue][:assignee] = issue.assignee.login
   end
   if issue.milestone?
     milestone = ensure_milestone(github, to_repo, issue.milestone.title)
-    options['milestone'] = milestone
+    data[:issue][:milestone] = milestone
   end
   
-  # create the new issue
-  new_issue = github.create_issue(to_repo, issue.title, body, options)
-  to_number = new_issue.number
-  puts "Created #{to_repo}##{to_number}: #{new_issue['title']}"
-  
-  # migrate comments
   if issue.comments > 0
     puts "Migrating #{issue['comments']} comments"
     github.issue_comments(from_repo, from_number).each do |comment|
-      github.add_comment(to_repo, to_number, migrate_comment_body(comment, from_repo))
+      data[:comments].push ({
+        body: migrate_comment_body(comment, from_repo),
+        created_at: comment.created_at.iso8601,
+      })
     end
   end
+  
+  path = "#{Octokit::Repository.path to_repo}/import/issues"
+  response = github.post(path, data)
+  return response.id
+end
+
+def close_migrated(github, from_repo, to_repo, from_number, to_number)
+  # migrate comments
   github.add_comment(from_repo, from_number, "Migrated to #{to_repo}##{to_number}")
   puts "Closing #{from_repo}##{from_number}"
   github.close_issue(from_repo, from_number)
 end
 
+def wait_for_import(github, to_repo, request_id)
+  url = "#{Octokit::Repository.path to_repo}/import/issues/#{request_id}"
+  puts "Waiting for #{url}"
+  response = github.get(url)
+  while response.status == "pending"
+    sleep 1
+    response = github.get(url)
+  end
+  if response.status == "failed"
+    puts response.errors
+    return
+  end
+  puts "Created #{response.issue_url}"
+  return response.issue_url.rpartition('/')[-1].to_i
+end
 
 # verify that there's a GitHub token in .netrc
 check_token
@@ -126,6 +150,7 @@ check_token
 # create client
 github = Octokit::Client.new(:netrc => true)
 github.auto_paginate = true
+github.default_media_type = 'application/vnd.github.golden-comet-preview+json'
 
 # parse args
 from_repo = ARGV[0]
@@ -145,7 +170,21 @@ if issues.length == 0
   exit(1)
 end
 
-# do the thing
-issues.map do |number|
+# Request issue import
+pending = issues.map do |number|
   migrate_issue(github, number, from_repo, to_repo)
+end
+
+issues.zip(pending).map do |from_number, request_id|
+  if request_id.nil?
+    next
+  end
+  # wait for new issues to be created
+  to_number = wait_for_import(github, to_repo, request_id)
+  if to_number.nil?
+    puts "Failed to migrate #{from_repo}/#{from_number}"
+  else
+    # add comment to original issue, linking to new home
+    close_migrated(github, from_repo, to_repo, from_number, to_number)
+  end
 end
