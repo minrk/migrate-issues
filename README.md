@@ -5,13 +5,13 @@ This is a dumb little script that migrates issues from one GitHub repo to anothe
 - Issue titles are copied unmodified.
 - Issue body links to original, and attributes to original author, like so:
 
-> @username opened old-org/old-repo#X at 2015-04-11 21:52:15 UTC
+> @username opened old-org/old-repo#X
 > 
 > original issue body
 
 - Comments are copied and attributed to the original author:
 
-> @username commented at 2015-04-11 21:52:15 UTC
+> @username \[commented\](link-to-original)
 > 
 > original comment
 
