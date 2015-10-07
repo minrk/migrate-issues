@@ -41,7 +41,7 @@ def migrate_comment_body(comment, repo)
   date = comment['created_at']
   url = comment['html_url']
   return [
-    "#{user} [commented](#{url}) at #{date}",
+    "@#{user} [commented](#{url}) at #{date}",
     relink_issues(comment['body'], repo)
   ].join("\n\n")
 end
@@ -52,7 +52,7 @@ def migrate_issue_body(issue, repo)
   date = issue['created_at']
   number = issue['number']
   return [
-    "#{user} opened #{repo}##{number} at #{date}",
+    "@#{user} opened #{repo}##{number} at #{date}",
     relink_issues(issue['body'], repo)
   ].join("\n\n")
 end
