@@ -101,10 +101,11 @@ def migrate_issue(github, from_number, from_repo, to_repo)
   if issue.assignee?
     data[:issue][:assignee] = issue.assignee.login
   end
-  if issue.milestone?
-    milestone = ensure_milestone(github, to_repo, issue.milestone.title)
-    data[:issue][:milestone] = milestone
-  end
+  # Don't migrate milestones
+  # if issue.milestone?
+  #   milestone = ensure_milestone(github, to_repo, issue.milestone.title)
+  #   data[:issue][:milestone] = milestone
+  # end
   
   if issue.comments > 0
     puts "Migrating #{issue['comments']} comments"
