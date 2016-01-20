@@ -19,10 +19,23 @@ def check_token
     :login => username,
     :password => password,
   )
-  reply = client.create_authorization(
-    :scopes => ["public_repo"],
-    :note => "Issue Migration",
-  )
+
+
+  
+  user = begin
+    reply = client.create_authorization(
+      :scopes => ["public_repo"],
+      :note => "Issue Migration",
+    )
+  rescue Octokit::OneTimePasswordRequired
+    otp = ask('OTP: ') {|q| q.echo = '*'}
+    reply = client.create_authorization(
+      :scopes => ["public_repo"],
+      :note => "Issue Migration",
+      :headers => {'X-GitHub-OTP' => otp}
+    )
+  end
+  
   token = reply.token
   rc['api.github.com'] = username, token
   rc.save
