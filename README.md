@@ -26,7 +26,7 @@ This is a dumb little script that migrates issues from one GitHub repo to anothe
 
     gem install octokit highline netrc
 
-Tf you have a `~/.netrc` file, check that the permission are `0600`. 
+If you have a `~/.netrc` file, check that the permission are `0600`. 
 
 ## Usage
 
